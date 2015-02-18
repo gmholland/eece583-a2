@@ -1,3 +1,4 @@
+import pdb
 import os.path
 import random
 import logging
@@ -5,6 +6,7 @@ from math import exp
 from tkinter import *
 from tkinter import ttk
 from tkinter import filedialog
+from colours import colour_pool
 
 class Node:
     """Class representing a circuit element.
@@ -13,9 +15,13 @@ class Node:
         loc - Site of temporary location of cell
         nets - list of nets the node belongs to"""
 
-    def __init__(self):
+    def __init__(self, ID):
+        self.ID = ID
         self.loc = None
         self.nets = []
+
+    def __str__(self):
+        return 'Node_{}({},{})'.format(self.ID, self.loc.row, self.loc.col)
 
     def get_partial_cost(self):
         """Get HPBB cost for nets that include this node."""
@@ -31,14 +37,16 @@ class Net:
     Data attributes:
         nodes - list of nodes the net connects"""
 
-    def __init__(self, nodes=[]):
-        self.nodes = nodes
+    def __init__(self):
+        self.nodes = []
+        self.colour = 'black'
 
     def get_hpbb(self):
         """Get length of half-perimter bounding box of net."""
         if not self.nodes:
             return 0
 
+        # TODO optimize implementation by storing max and min of coords
         # initialize max and mins to first element coords
         x_min = x_max = self.nodes[0].loc.col
         y_min = y_max = self.nodes[0].loc.row
@@ -68,9 +76,39 @@ class Site:
         self.row = row
         self.col = col
         self.content = None
+        self.text_id = None
+        self.rect_id = None
+
+    def __str__(self):
+        return '[{}]'.format(self.content)
 
     def is_empty(self):
-        return self.content is None
+        return self.content == None
+
+    def set_text(self, text=''):
+        # create canvas text if needed
+        if self.text_id == None:
+            x, y = self.get_rect_center()
+            self.text_id = canvas.create_text(x, y, text=text)
+        else:
+            canvas.itemconfigure(self.text_id, text=text)
+
+    def update_rect(self):
+        if self.is_empty():
+            canvas.itemconfigure(self.rect_id, fill='white')
+            # FIXME debug: put ID label on each node
+            self.set_text('')
+        else:
+            canvas.itemconfigure(self.rect_id, fill='light grey')
+            # FIXME debug: put ID label on each node
+            self.set_text(self.content.ID)
+
+    def get_rect_center(self):
+        """Returns (x, y) coordinates of center of Site's canvas rectangle."""
+        x1, y1, x2, y2 = canvas.coords(self.rect_id) # get rect coords
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        return (center_x, center_y)
 
 
 class Layout:
@@ -95,7 +133,10 @@ class Layout:
 
     def init_nodelist(self, ncells):
         """Initialize the node list by populating with ncells Nodes."""
-        self.nodelist = [Node() for i in range(self.ncells)]
+        self.nodelist = [Node(i) for i in range(self.ncells)]
+
+    def init_netlist(self):
+        self.netlist = []
 
     def get_site_by_id(self, site_id):
         """Return site from grid given a site ID."""
@@ -133,17 +174,22 @@ class Layout:
                 self.ncells, self.nconnections, nrows, ncols, self.nsites))
 
             # next lines describe netlist
-            while True:
+            self.init_netlist()
+
+            # randomize net colours
+            random.shuffle(colour_pool)
+
+            # parse nets
+            for net_id in range(self.nconnections):
                 line = f.readline().strip().split()
 
-                # stop once end of file is reached
-                if not line:
-                    break
+                # set net colour
+                net = Net()
+                net.colour = colour_pool[net_id % len(colour_pool)]
 
                 # each line corresponds to a net giving node IDs of the nodes
                 #  contained in the net
                 ncells_in_net = line[0]
-                net = Net()
                 for i in line[1:]:
                     node_id = int(i)
                     # lookup corresonding node in nodelist
@@ -156,6 +202,24 @@ class Layout:
 
         logging.info('parsed {} nets in netlist file'.format(
             len(self.netlist)))
+
+    def print_nodelist(self):
+        for node in self.nodelist:
+            print(node, end=',')
+        print()
+
+    def print_netlist(self):
+        for i, net in enumerate(self.netlist):
+            print(i, end=':')
+            for node in net.nodes:
+                print(node, end=',')
+            print()
+
+    def print_grid(self):
+        for row in self.grid:
+            for site in row:
+                print(site, end=' ')
+            print()
 
 
 def open_benchmark(*args):
@@ -176,6 +240,9 @@ def open_benchmark(*args):
 
     # enable the Place button
     place_btn.state(['!disabled'])
+
+    # draw layout of empty cells
+    init_canvas()
 
 
 def initialize_placement():
@@ -253,36 +320,35 @@ def swap_sites(site1, site2):
     temp_content = site1.content
     site1.content = site2.content
     site2.content = temp_content
-    if not site1.is_empty():
-        site1.loc = site1
-    if not site2.is_empty():
-        site2.loc = site2
+
+    if site1.content != None:
+        site1.content.loc = site1
+    if site2.content != None:
+        site2.content.loc = site2
 
 
 def get_new_temp(temp, beta):
     """Return the next annealing temperature."""
+    # TODO implement temp reduction based on std deviation or recent moves
     return beta * temp
 
 
 def exit_condition(temp):
     """Check annealing exit condition."""
+    # TODO monitor improvement of anneal
     return True
 
 
-def place(*args):
+def anneal(*args):
     """Place the circuit using simulated annealing."""
 
     T = 1 # starting temperature
     k = 10 # constant for num iterations at each temp
     beta = 0.9 # factor for reducing temp
 
-    # first place all nodes randomly
-    initialize_placement()
-
     # set start temperature
     temp = T
-    #niterations = int(k * (layout.ncells)**(4/3))
-    niterations = int(layout.ncells**(4/3))
+    niterations = int(k * (layout.ncells)**(4/3))
     prev_cost = layout.get_cost()
 
     while True:
@@ -293,6 +359,87 @@ def place(*args):
 
         if exit_condition(temp):
             break
+
+    update_canvas()
+
+    cost = layout.get_cost()
+    cost_text.set(cost)
+    logging.info('final cost = {}'.format(cost))
+
+
+def place(*args):
+    # first place all nodes randomly
+    initialize_placement()
+
+    update_canvas()
+
+    cost = layout.get_cost()
+    cost_text.set(cost)
+    logging.info('initial cost = {}'.format(cost))
+
+    # enable the Anneal button
+    anneal_btn.state(['!disabled'])
+
+    # disable the Place button
+    place_btn.state(['disabled'])
+
+
+# canvas functions TODO put into GUI class?
+def init_canvas():
+    """Initialize the canvas with rectangles for layout."""
+
+    # clear canvas
+    canvas.delete(ALL)
+
+    # calculate size of each site
+    rdim = 15
+    rh = rw = rdim
+    xoffset = yoffset = rdim // 5
+
+    # resize the canvas
+    cw = layout.ncols * rw + 2 * xoffset
+    ch = (2 * layout.nrows - 1) * rh + 2 * yoffset
+    canvas.config(width=cw, height=ch)
+
+    # create rectangles for each cell site
+    for row in layout.grid:
+        for site in row:
+            x1 = site.col * rw + xoffset
+            x2 = x1 + rw
+            y1 = site.row * rh * 2 + yoffset
+            y2 = y1 + rh
+            site.rect_id = canvas.create_rectangle(x1, y1, x2, y2,
+                    fill='white')
+
+
+def update_canvas():
+    clear_nets()
+    update_rects()
+    draw_nets()
+
+
+def update_rects(*args):
+    """Redraw sites in canvas."""
+    # Update rectanges of sites
+    for row in layout.grid:
+        for site in row:
+            site.update_rect()
+
+
+def clear_nets(*args):
+    """Clear nets in canvas."""
+    canvas.delete('ratsnest')
+
+
+def draw_nets(*args):
+    """Draw nets in canvas."""
+    # Update rats nest of nets
+    for net in layout.netlist:
+        source = net.nodes[0]
+        x1, y1 = source.loc.get_rect_center()
+        for sink in net.nodes[1:]:
+            x2, y2 = sink.loc.get_rect_center()
+            canvas.create_line(x1, y1, x2, y2, fill=net.colour, tags='ratsnest')
 
 
 # main function
@@ -320,6 +467,8 @@ if __name__ == '__main__':
     canvas_frame.grid(column=0, row=0, sticky=(N,E,S,W))
     btn_frame = ttk.Frame(top_frame)
     btn_frame.grid(column=0, row=1)
+    stats_frame = ttk.Frame(top_frame)
+    stats_frame.grid(column=0, row=2)
 
     # setup canvas frame (contains benchmark label and canvas)
     filename = StringVar()
@@ -334,6 +483,16 @@ if __name__ == '__main__':
     place_btn = ttk.Button(btn_frame, text="Place", command=place)
     place_btn.grid(column=1, row=0, padx=5, pady=5)
     place_btn.state(['disabled'])
+    anneal_btn = ttk.Button(btn_frame, text="Anneal", command=anneal)
+    anneal_btn.grid(column=2, row=0, padx=5, pady=5)
+    anneal_btn.state(['disabled'])
+
+    # setup stats frame (contains statistics)
+    cost_text = StringVar()
+    cost_text.set('-')
+    ttk.Label(stats_frame, text="cost:").grid(column=1, row=1)
+    cost_lbl = ttk.Label(stats_frame, textvariable=cost_text)
+    cost_lbl.grid(column=2, row=1)
 
     # run main event loop for gui
     root.mainloop()
