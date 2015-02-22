@@ -1,7 +1,7 @@
-import pdb
 import os.path
 import random
 import logging
+import stats
 from math import exp
 from tkinter import *
 from tkinter import ttk
@@ -144,7 +144,7 @@ class Layout:
         col = site_id % self.ncols
         return self.grid[row][col]
 
-    def get_cost(self):
+    def calculate_cost(self):
         """Caclulate cost of current placement."""
         cost = 0
         for net in self.netlist:
@@ -259,7 +259,48 @@ def initialize_placement():
         node.loc = site
 
 
-def anneal_inner(temp, niterations):
+def get_initial_temp(k=20, nmoves=10):
+    """Return a good value to use for the initial temperature.
+
+    Based on standard deviation of a number of random moves."""
+    costs = stats.Container()
+    costs_list = [0 for i in range(nmoves)]
+    for i in range(nmoves):
+        # randomly select two sites
+        site1, site2 = select_sites()
+
+        # calculate cost of move - only need to consider nets that
+        # contain the nodes we swapped
+        pre_swap_cost = 0
+        if not site1.is_empty():
+            node1 = site1.content
+            pre_swap_cost += node1.get_partial_cost()
+        if not site2.is_empty():
+            node2 = site2.content
+            pre_swap_cost += node2.get_partial_cost()
+
+        swap_sites(site1, site2)
+
+        post_swap_cost = 0
+        if not site1.is_empty():
+            node1 = site1.content
+            post_swap_cost += node1.get_partial_cost()
+        if not site2.is_empty():
+            node2 = site2.content
+            post_swap_cost += node2.get_partial_cost()
+
+        delta_c = post_swap_cost - pre_swap_cost 
+        layout.cost += delta_c
+        costs.add(layout.cost)
+        costs_list[i] = layout.cost
+    
+    print('costs of {} random moves:'.format(nmoves), costs_list)
+    std_dev = costs.get_std_dev()
+    print('std_dev of {} random moves is'.format(nmoves), std_dev)
+    initial_temp = k * std_dev
+    return initial_temp
+
+def anneal_inner(temp, niterations, accepted_costs):
     """Inner loop of simulated annealing algorithm."""
 
     for i in range(niterations):
@@ -293,7 +334,8 @@ def anneal_inner(temp, niterations):
 
         if r < exp(-delta_c / temp):
             # take move (keep swap)
-            pass
+            layout.cost += delta_c
+            accepted_costs.add(layout.cost)
         else:
             # don't take move (undo swap)
             swap_sites(site2, site1)
@@ -327,42 +369,57 @@ def swap_sites(site1, site2):
         site2.content.loc = site2
 
 
-def get_new_temp(temp, beta):
-    """Return the next annealing temperature."""
-    # TODO implement temp reduction based on std deviation or recent moves
-    return beta * temp
+def get_new_temp(temp, accepted_costs):
+    """Return the next annealing temperature.
+    
+    Based on standard deviation of accepted moves at previous temperature.
+    """
+    std_dev = accepted_costs.get_std_dev()
+    new_temp = temp * exp(-0.7 * temp / std_dev)
+
+    print('std_dev of accepted costs', std_dev)
+    print('temperature is now', new_temp)
+    return new_temp
 
 
 def exit_condition(temp):
     """Check annealing exit condition."""
     # TODO monitor improvement of anneal
-    return True
+    std_dev = accepted_costs.get_std_dev()
+    print('std_dev of accepted costs', std_dev)
+    if std_dev < 2:
+        return True
+    else:
+        return False
 
 
 def anneal(*args):
     """Place the circuit using simulated annealing."""
+    global accepted_costs
 
-    T = 1 # starting temperature
+    layout.cost = layout.calculate_cost()
+
+    T = get_initial_temp() # starting temperature
     k = 10 # constant for num iterations at each temp
-    beta = 0.9 # factor for reducing temp
 
     # set start temperature
     temp = T
+    print('initial temp is', T)
     niterations = int(k * (layout.ncells)**(4/3))
-    prev_cost = layout.get_cost()
 
     while True:
-        anneal_inner(temp, niterations)
+        accepted_costs = stats.Container()
+        anneal_inner(temp, niterations, accepted_costs)
 
         # reduce temp
-        temp = get_new_temp(temp, beta)
+        temp = get_new_temp(temp, accepted_costs)
 
         if exit_condition(temp):
             break
 
     update_canvas()
 
-    cost = layout.get_cost()
+    cost = layout.calculate_cost()
     cost_text.set(cost)
     logging.info('final cost = {}'.format(cost))
 
@@ -373,7 +430,7 @@ def place(*args):
 
     update_canvas()
 
-    cost = layout.get_cost()
+    cost = layout.calculate_cost()
     cost_text.set(cost)
     logging.info('initial cost = {}'.format(cost))
 
@@ -392,6 +449,7 @@ def init_canvas():
     canvas.delete(ALL)
 
     # calculate size of each site
+    # TODO make rdim scale to size of layout
     rdim = 15
     rh = rw = rdim
     xoffset = yoffset = rdim // 5

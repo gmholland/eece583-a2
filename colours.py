@@ -3,7 +3,7 @@
 #     'navajo white', 'lemon chiffon', 'mint cream', 'azure', 'alice blue', 'lavender',
 #     'lavender blush', 'misty rose', 'dark slate gray', 'dim gray', 'slate gray',
 #     'light slate gray', 'gray', 'light grey', 
-   
+
 colour_pool = ['midnight blue', 'navy', 'cornflower blue', 'dark slate blue',
     'slate blue', 'medium slate blue', 'light slate blue', 'medium blue', 'royal blue',  'blue',
     'dodger blue', 'deep sky blue', 'sky blue', 'light sky blue', 'steel blue', 'light steel blue',
