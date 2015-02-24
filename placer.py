@@ -385,6 +385,8 @@ def anneal_outer(temp, niterations):
 def anneal_inner(temp, niterations, accepted_costs):
     """Inner loop of simulated annealing algorithm."""
 
+    naccepted_moves = 0
+    ntotal_moves = 0
     for i in range(niterations):
         # randomly select two sites
         [site1, site2] = select_sites()
@@ -410,7 +412,6 @@ def anneal_inner(temp, niterations, accepted_costs):
             post_swap_cost += node2.get_partial_cost()
 
         delta_c = post_swap_cost - pre_swap_cost 
-        #print('delta_c =', delta_c)
 
         # r = random(0, 1)
         r = random.random()
@@ -419,9 +420,14 @@ def anneal_inner(temp, niterations, accepted_costs):
             # take move (keep swap)
             layout.cost += delta_c
             accepted_costs.add(layout.cost)
+            naccepted_moves += 1
         else:
             # don't take move (undo swap)
             swap_sites(site2, site1)
+        ntotal_moves += 1
+
+    accept_rate = 100 * naccepted_moves / ntotal_moves
+    print("accept_rate =", accept_rate)
 
 
 def get_new_temp(temp, accepted_costs):
@@ -443,10 +449,11 @@ def get_new_temp(temp, accepted_costs):
 
 
 def exit_condition(temp, accepted_costs):
-    """Check annealing exit condition."""
+    """Check annealing exit condition
+    
+    Based on standard deviation of the costs of accepted moves."""
     
     print("exit_condition()")
-    # TODO monitor improvement of anneal
     std_dev = accepted_costs.get_std_dev()
     print('std_dev(accepted costs) =', std_dev)
     if std_dev < 2:
@@ -493,7 +500,17 @@ def init_canvas():
 
     # calculate size of each site
     # TODO make rdim scale to size of layout
-    rdim = 10
+    if layout.nrows >= 50:
+        rdim = 8
+    elif layout.nrows >= 30:
+        rdim = 10
+    elif layout.nrows >= 20:
+        rdim = 15
+    elif layout.nrows >= 20:
+        rdim = 20
+    else:
+        rdim = 30
+
     rh = rw = rdim
     xoffset = yoffset = rdim // 5
 
@@ -548,11 +565,9 @@ def draw_nets(*args):
 # main function
 if __name__ == '__main__':
     # set random number generator seed 
-    # TODO make configurable via GUI or cmd line
     random.seed(0)
 
     # setup logfile
-    #logfilename = 'placer_{}.log'.format(time.strftime("%H-%M-%S"))
     logfilename = 'placer.log'
     logging.basicConfig(filename=logfilename, filemode='w', level=logging.INFO)
 
