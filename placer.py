@@ -1,6 +1,7 @@
 import os.path
 import random
 import logging
+import time
 import stats
 from math import exp
 from tkinter import *
@@ -97,11 +98,11 @@ class Site:
         if self.is_empty():
             canvas.itemconfigure(self.rect_id, fill='white')
             # FIXME debug: put ID label on each node
-            self.set_text('')
+            #self.set_text('')
         else:
             canvas.itemconfigure(self.rect_id, fill='light grey')
             # FIXME debug: put ID label on each node
-            self.set_text(self.content.ID)
+            #self.set_text(self.content.ID)
 
     def get_rect_center(self):
         """Returns (x, y) coordinates of center of Site's canvas rectangle."""
@@ -300,6 +301,7 @@ def get_initial_temp(k=20, nmoves=10):
     initial_temp = k * std_dev
     return initial_temp
 
+
 def anneal_inner(temp, niterations, accepted_costs):
     """Inner loop of simulated annealing algorithm."""
 
@@ -377,27 +379,55 @@ def get_new_temp(temp, accepted_costs):
     std_dev = accepted_costs.get_std_dev()
     new_temp = temp * exp(-0.7 * temp / std_dev)
 
-    print('std_dev of accepted costs', std_dev)
-    print('temperature is now', new_temp)
+    print('T =', new_temp)
     return new_temp
 
 
-def exit_condition(temp):
+def exit_condition(temp, accepted_costs):
     """Check annealing exit condition."""
+    
+    print("exit_condition()")
     # TODO monitor improvement of anneal
     std_dev = accepted_costs.get_std_dev()
-    print('std_dev of accepted costs', std_dev)
+    print('std_dev(accepted costs) =', std_dev)
     if std_dev < 2:
         return True
     else:
         return False
 
 
+def anneal_outer(temp, niterations):
+    """Outer loop of annealing function.
+    
+    Run inner loop, reduce temperature, check exit condition.
+    """
+    print("anneal_outer()")
+    accepted_costs = stats.Container()
+    # run anneal inner loop
+    anneal_inner(temp, niterations, accepted_costs)
+
+    # reduce temp
+    temp = get_new_temp(temp, accepted_costs)
+
+    # redraw canvas
+    update_canvas()
+
+    print("cost =", layout.cost)
+
+    # check exit condition
+    if not exit_condition(temp, accepted_costs):
+        # exit condition not met, run outer loop again
+        root.after(1000, anneal_outer, temp, niterations)
+    else:
+        # exit condition met, do final steps
+        cost = layout.calculate_cost()
+        cost_text.set(cost)
+        logging.info('final cost = {}'.format(cost))
+        print('final cost = {}'.format(cost))
+
+
 def anneal(*args):
     """Place the circuit using simulated annealing."""
-    global accepted_costs
-
-    layout.cost = layout.calculate_cost()
 
     T = get_initial_temp() # starting temperature
     k = 10 # constant for num iterations at each temp
@@ -407,26 +437,14 @@ def anneal(*args):
     print('initial temp is', T)
     niterations = int(k * (layout.ncells)**(4/3))
 
-    while True:
-        accepted_costs = stats.Container()
-        anneal_inner(temp, niterations, accepted_costs)
-
-        # reduce temp
-        temp = get_new_temp(temp, accepted_costs)
-
-        if exit_condition(temp):
-            break
-
-    update_canvas()
-
-    cost = layout.calculate_cost()
-    cost_text.set(cost)
-    logging.info('final cost = {}'.format(cost))
+    anneal_outer(temp, niterations)
 
 
 def place(*args):
     # first place all nodes randomly
     initialize_placement()
+
+    layout.cost = layout.calculate_cost()
 
     update_canvas()
 
@@ -450,7 +468,7 @@ def init_canvas():
 
     # calculate size of each site
     # TODO make rdim scale to size of layout
-    rdim = 15
+    rdim = 10
     rh = rw = rdim
     xoffset = yoffset = rdim // 5
 
@@ -474,6 +492,7 @@ def update_canvas():
     clear_nets()
     update_rects()
     draw_nets()
+    cost_text.set(layout.cost)
 
 
 def update_rects(*args):
@@ -507,7 +526,8 @@ if __name__ == '__main__':
     random.seed(0)
 
     # setup logfile
-    logging.basicConfig(filename='placer.log', filemode='w', level=logging.INFO)
+    logfilename = 'placer_{}.log'.format(time.strftime("%H-%M-%S"))
+    logging.basicConfig(filename=logfilename, filemode='w', level=logging.INFO)
 
     # chip layout
     layout = Layout()
@@ -526,7 +546,7 @@ if __name__ == '__main__':
     btn_frame = ttk.Frame(top_frame)
     btn_frame.grid(column=0, row=1)
     stats_frame = ttk.Frame(top_frame)
-    stats_frame.grid(column=0, row=2)
+    stats_frame.grid(column=1, row=0)
 
     # setup canvas frame (contains benchmark label and canvas)
     filename = StringVar()
