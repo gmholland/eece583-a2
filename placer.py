@@ -13,6 +13,7 @@ class Node:
     """Class representing a circuit element.
     
     Data attributes:
+        ID - Node number, determined from benchmark file
         loc - Site of temporary location of cell
         nets - list of nets the node belongs to"""
 
@@ -47,12 +48,11 @@ class Net:
         if not self.nodes:
             return 0
 
-        # TODO optimize implementation by storing max and min of coords
         # initialize max and mins to first element coords
         x_min = x_max = self.nodes[0].loc.col
         y_min = y_max = self.nodes[0].loc.row
 
-        # find max and min coordinates
+        # find max and min row and col values of remaining nodes
         for node in self.nodes[1:]:
             if node.loc.col < x_min:
                 x_min = node.loc.col
@@ -71,7 +71,15 @@ class Net:
 
 
 class Site:
-    """Class representing a cell site."""
+    """Class representing a cell site.
+    
+    Data attributes:
+        row - row number in the cell layout
+        col - column number in the cell layout
+        content - pointer to Node element if occupied, None otherwise
+        text_id - canvas ID of site label, set to the Node number of content
+        rect_id - canvas ID of site rectangle
+    """
 
     def __init__(self, row=None, col=None):
         self.row = row
@@ -87,6 +95,7 @@ class Site:
         return self.content == None
 
     def set_text(self, text=''):
+        """Set text label of Site."""
         # create canvas text if needed
         if self.text_id == None:
             x, y = self.get_rect_center()
@@ -95,14 +104,13 @@ class Site:
             canvas.itemconfigure(self.text_id, text=text)
 
     def update_rect(self):
+        """Colour the rectangle according to content, set text to Node ID."""
         if self.is_empty():
             canvas.itemconfigure(self.rect_id, fill='white')
-            # FIXME debug: put ID label on each node
-            #self.set_text('')
+            #self.set_text('') # debugging: put ID label on each node
         else:
             canvas.itemconfigure(self.rect_id, fill='light grey')
-            # FIXME debug: put ID label on each node
-            #self.set_text(self.content.ID)
+            #self.set_text(self.content.ID) # debug: put ID label on each node
 
     def get_rect_center(self):
         """Returns (x, y) coordinates of center of Site's canvas rectangle."""
@@ -137,6 +145,7 @@ class Layout:
         self.nodelist = [Node(i) for i in range(self.ncells)]
 
     def init_netlist(self):
+        """Initialize netlist as an empty list."""
         self.netlist = []
 
     def get_site_by_id(self, site_id):
@@ -227,7 +236,7 @@ def open_benchmark(*args):
     """Function called when pressing Open button.
     
     Opens a dialog for user to select a netlist file and calls
-    parse_netlist."""
+    Layout.parse_netlist."""
 
     # open a select file dialog for user to choose a benchmark file
     openfilename = filedialog.askopenfilename()
@@ -246,6 +255,29 @@ def open_benchmark(*args):
     init_canvas()
 
 
+def place(*args):
+    """Function called when pressing Place button.
+
+    Performs initial random placement."""
+
+    # first place all nodes randomly
+    initialize_placement()
+
+    layout.cost = layout.calculate_cost()
+
+    update_canvas()
+
+    cost = layout.calculate_cost()
+    cost_text.set(cost)
+    logging.info('initial cost = {}'.format(cost))
+
+    # enable the Anneal button
+    anneal_btn.state(['!disabled'])
+
+    # disable the Place button
+    place_btn.state(['disabled'])
+
+
 def initialize_placement():
     """Randomly assign each node in the nodelist to a cell site."""
 
@@ -260,10 +292,28 @@ def initialize_placement():
         node.loc = site
 
 
+def anneal(*args):
+    """Function called when pressing the Anneal button.
+    
+    Place the circuit using simulated annealing."""
+
+    # annealing schedule
+    temp = get_initial_temp() # starting temperature
+    k = 10 # constant for num iterations at each temp
+    niterations = int(k * (layout.ncells)**(4/3))
+
+    # print annealing schedule parameters
+    print('T0 =', temp)
+    print('niterations =', niterations)
+
+    anneal_outer(temp, niterations)
+
+
 def get_initial_temp(k=20, nmoves=10):
     """Return a good value to use for the initial temperature.
 
     Based on standard deviation of a number of random moves."""
+
     costs = stats.Container()
     costs_list = [0 for i in range(nmoves)]
     for i in range(nmoves):
@@ -302,6 +352,36 @@ def get_initial_temp(k=20, nmoves=10):
     return initial_temp
 
 
+def anneal_outer(temp, niterations):
+    """Outer loop of annealing function.
+    
+    Run inner loop, reduce temperature, check exit condition.  """
+
+    print("anneal_outer()")
+    accepted_costs = stats.Container()
+    # run anneal inner loop
+    anneal_inner(temp, niterations, accepted_costs)
+
+    # reduce temp
+    temp = get_new_temp(temp, accepted_costs)
+
+    # redraw canvas
+    update_canvas()
+
+    print("cost =", layout.cost)
+
+    # check exit condition
+    if not exit_condition(temp, accepted_costs):
+        # exit condition not met, run outer loop again
+        root.after(1000, anneal_outer, temp, niterations)
+    else:
+        # exit condition met, do final steps
+        cost = layout.calculate_cost()
+        cost_text.set(cost)
+        logging.info('final cost = {}'.format(cost))
+        print('final cost = {}'.format(cost))
+
+
 def anneal_inner(temp, niterations, accepted_costs):
     """Inner loop of simulated annealing algorithm."""
 
@@ -330,6 +410,7 @@ def anneal_inner(temp, niterations, accepted_costs):
             post_swap_cost += node2.get_partial_cost()
 
         delta_c = post_swap_cost - pre_swap_cost 
+        #print('delta_c =', delta_c)
 
         # r = random(0, 1)
         r = random.random()
@@ -341,6 +422,38 @@ def anneal_inner(temp, niterations, accepted_costs):
         else:
             # don't take move (undo swap)
             swap_sites(site2, site1)
+
+
+def get_new_temp(temp, accepted_costs):
+    """Return the next annealing temperature.
+    
+    Based on standard deviation of accepted moves at previous temperature."""
+
+    print('get_new_temp()')
+    std_dev = accepted_costs.get_std_dev()
+    print('std_dev(accepted_costs) =', std_dev)
+    new_temp = temp * exp(-0.7 * temp / std_dev)
+
+    # avoid overflow errors due to very low temperatures
+    if new_temp < 0.1:
+        new_temp = 0.1
+
+    print('new T =', new_temp)
+    return new_temp
+
+
+def exit_condition(temp, accepted_costs):
+    """Check annealing exit condition."""
+    
+    print("exit_condition()")
+    # TODO monitor improvement of anneal
+    std_dev = accepted_costs.get_std_dev()
+    print('std_dev(accepted costs) =', std_dev)
+    if std_dev < 2:
+        return True
+    else:
+        return False
+
 
 
 def select_sites():
@@ -371,97 +484,9 @@ def swap_sites(site1, site2):
         site2.content.loc = site2
 
 
-def get_new_temp(temp, accepted_costs):
-    """Return the next annealing temperature.
-    
-    Based on standard deviation of accepted moves at previous temperature.
-    """
-    std_dev = accepted_costs.get_std_dev()
-    new_temp = temp * exp(-0.7 * temp / std_dev)
-
-    print('T =', new_temp)
-    return new_temp
-
-
-def exit_condition(temp, accepted_costs):
-    """Check annealing exit condition."""
-    
-    print("exit_condition()")
-    # TODO monitor improvement of anneal
-    std_dev = accepted_costs.get_std_dev()
-    print('std_dev(accepted costs) =', std_dev)
-    if std_dev < 2:
-        return True
-    else:
-        return False
-
-
-def anneal_outer(temp, niterations):
-    """Outer loop of annealing function.
-    
-    Run inner loop, reduce temperature, check exit condition.
-    """
-    print("anneal_outer()")
-    accepted_costs = stats.Container()
-    # run anneal inner loop
-    anneal_inner(temp, niterations, accepted_costs)
-
-    # reduce temp
-    temp = get_new_temp(temp, accepted_costs)
-
-    # redraw canvas
-    update_canvas()
-
-    print("cost =", layout.cost)
-
-    # check exit condition
-    if not exit_condition(temp, accepted_costs):
-        # exit condition not met, run outer loop again
-        root.after(1000, anneal_outer, temp, niterations)
-    else:
-        # exit condition met, do final steps
-        cost = layout.calculate_cost()
-        cost_text.set(cost)
-        logging.info('final cost = {}'.format(cost))
-        print('final cost = {}'.format(cost))
-
-
-def anneal(*args):
-    """Place the circuit using simulated annealing."""
-
-    T = get_initial_temp() # starting temperature
-    k = 10 # constant for num iterations at each temp
-
-    # set start temperature
-    temp = T
-    print('initial temp is', T)
-    niterations = int(k * (layout.ncells)**(4/3))
-
-    anneal_outer(temp, niterations)
-
-
-def place(*args):
-    # first place all nodes randomly
-    initialize_placement()
-
-    layout.cost = layout.calculate_cost()
-
-    update_canvas()
-
-    cost = layout.calculate_cost()
-    cost_text.set(cost)
-    logging.info('initial cost = {}'.format(cost))
-
-    # enable the Anneal button
-    anneal_btn.state(['!disabled'])
-
-    # disable the Place button
-    place_btn.state(['disabled'])
-
-
-# canvas functions TODO put into GUI class?
+# GUI functions
 def init_canvas():
-    """Initialize the canvas with rectangles for layout."""
+    """Initialize the canvas with rectangles for according to layout."""
 
     # clear canvas
     canvas.delete(ALL)
@@ -489,10 +514,16 @@ def init_canvas():
 
 
 def update_canvas():
+    """Redraw the canvas and update statistics being displayed."""
     clear_nets()
     update_rects()
     draw_nets()
     cost_text.set(layout.cost)
+
+
+def clear_nets(*args):
+    """Remove nets from canvas."""
+    canvas.delete('ratsnest')
 
 
 def update_rects(*args):
@@ -501,11 +532,6 @@ def update_rects(*args):
     for row in layout.grid:
         for site in row:
             site.update_rect()
-
-
-def clear_nets(*args):
-    """Clear nets in canvas."""
-    canvas.delete('ratsnest')
 
 
 def draw_nets(*args):
@@ -526,7 +552,8 @@ if __name__ == '__main__':
     random.seed(0)
 
     # setup logfile
-    logfilename = 'placer_{}.log'.format(time.strftime("%H-%M-%S"))
+    #logfilename = 'placer_{}.log'.format(time.strftime("%H-%M-%S"))
+    logfilename = 'placer.log'
     logging.basicConfig(filename=logfilename, filemode='w', level=logging.INFO)
 
     # chip layout
