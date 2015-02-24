@@ -1,0 +1,141 @@
+= Functional Description of the Placer =
+This placer program uses the simulated annealing algorithm to determine
+a good placement for standard cell IC layouts. A GUI is used to display
+the progress of the placer by showing the cells as well as their
+interconnections using coloured rats nest which is updated at each new
+temperature.
+
+The implementation of the annealing algorithm is split into two high-
+level functions that correspond to the inner and outer loops of the
+annealing algorithm, named anneal_inner() and anneal_outer() respectively.
+
+The anneal_outer() function calls the anneal_inner() function, reduces
+the temperature, updates the cell layout in the GUI and then checks
+the annealing exit condition. If the exit condition has not been net,
+the anneal_outer function is called again after a short delay which
+gives the Tk GUI framework time to redraw the updated layout in the GUI.
+If the exit condition is met, the final cost of the achieved layout
+is recorded to the log file.
+
+The anneal_inner() function implements the inner loop of the anneal.
+First we randomly select two sites and calculate the partial cost of
+the nodes at those sites. We define the partial cost to be the half-
+perimeter bounding box cost of only nodes connected to the nodes we
+selected for swapping. It is also possible to swap a node with an
+empty site. Then we swap the two sites in the layout, recalculate
+the partial cost for those sites to obtain the difference in cost.
+From here we decide whether to keep the swap using the standard
+annealing function based on temperature, cost difference and the
+randomly selected value between 0 and 1.
+
+= Annealing Schedule =
+The annealing schedule consists of selection of the start temperature
+(T0), the number of iterations to perform at each temperature (N),
+a method of reducing the temperature and the exit condition.
+
+== Initial Temperature ==
+For this program we implemented a method for choosing initial
+temperature given in a paper by Sangiovanni-Vencentelli that
+was mentioned in class. We choose the initial temperature using
+a formula with the form:
+
+    T0 = 20 * (standard deviation of costs of n random swap)
+
+We experimented with differing values of n, starting with performing
+50 random moves and finding their standard deviation. This ended up
+giving very large starting temperatures and we found the value of 10
+to be more suitable. We found that the initial temperature calculated
+with this method was allowing > 90% of moves.
+
+== Number of Iterations at each Temperature ==
+This program uses the method given in class for determining a value
+for the number of inner loop iterations:
+
+    niterations = k * N^(4/3)
+
+We chose a value of 10 for k in order to keep the runtime somewhat
+reasonable, however we did not experiment with adjusting this value.
+It is expected that lower values of k would reduce runtime but may
+affect the quality of results.
+
+== Method for Reducing Temperature ==
+We chose to use the method presented in class for reducing T using
+a formula of the form:
+
+    T_new = T_old * e^(-0.7 * T_old / sigma)
+
+where sigma is the standard deviation of accepted moves at T_old.
+
+This method seemed to give good overall results and was not
+experimented with otherwise.
+
+== Exit Condition ==
+The exit condition for the anneal is based on monitoring the improvement
+in the cost function. For this reason we chose to monitor the standard
+deviation of the accepted costs at the previous temperature and stop
+the algorithm once the standard deviation fell below a threshold.
+We started with a threshold of a standard deviation of 1, but found that
+this caused the temperature value to drop well below 0.01. This caused
+overflow errors in the Python math library when using the formula to
+determine if a move should be accepted. Therefore we decided to set the
+threshold at a standard deviation of 2, which seemed to give good
+results.
+
+= Considerations for Faster Runtime =
+In order to reduce runtime, the inner loop calculates only the partial
+costs instead of calculating cost for the entire placement each time.
+The definition of partial cost is given in the Function Description
+above.
+
+Furthermore, because the exit condition depends on knowing the
+variance of the costs, a container class for statistics was implemented.
+This container keeps a running mean and standard deviation without
+actually storing all the elements, using an incremental formula.
+This method prevents having to store all the elements, reducing memory
+requirements and also prevents having to iterate through all items
+to calculate standard deviation, saving runtime. The iterative
+algorithm and its Python implementation were adapted from the following:
+
+    en.wikipedia.org/wiki/Algorithms_for_calculating_variance
+
+= Table of Results =
+The following table shows the final cost of each of the benchmark
+circuits:
+
+	---------------------
+	| Benchmark | Cost  |
+	=====================
+	| alu2      | 1272  |
+	---------------------
+	| apex1     | 8005  |
+	---------------------
+	| apex4     | 14097 |
+	---------------------
+	| C880      | 1465  |
+	---------------------
+	| cm138a    | 55    |
+	---------------------
+	| cm150a    | 101   |
+	---------------------
+	| cm151a    | 56    |
+	---------------------
+	| cm162a    | 120   |
+	---------------------
+	| cps       | 6430  |
+	---------------------
+	| e64       | 2554  |
+	---------------------
+	| paira     | 5438  |
+	---------------------
+	| pairb     | 5902  |
+	---------------------
+
+= How to Run the Program =
+A README file containing instructions on how to run the placer program is
+included with this report.
+
+= GitHub =
+All of the source code, this report document and the README file are
+available in a git repository hosted on GitHub at the following address:
+
+    https://github.com/gmholland/eece583-a2
